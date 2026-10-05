@@ -1,0 +1,499 @@
+<template>
+  <div class="page">
+    <canvas
+      id="map"
+      class="map"
+      ontouchstart="onTouchStart"
+      ontouchmove="onTouchMove"
+      ontouchend="onTouchEnd"
+      ontouchcancel="onTouchEnd"
+    ></canvas>
+
+    <!-- 缩放 / 定位 控制按钮 -->
+    <div class="ctl ctl-zoom-in" onclick="zoomIn">
+      <text class="ctl-txt">＋</text>
+    </div>
+    <div class="ctl ctl-zoom-out" onclick="zoomOut">
+      <text class="ctl-txt">－</text>
+    </div>
+    <div class="ctl ctl-locate" onclick="locate">
+      <text class="ctl-txt">⌖</text>
+    </div>
+
+    <!-- 提示信息（定位失败等） -->
+    <text class="hint" if="{{hintVisible}}">{{hint}}</text>
+  </div>
+</template>
+
+<style>
+  .page {
+    position: relative;
+    width: 466px;
+    height: 466px;
+    background-color: #0a0e14;
+  }
+
+  .map {
+    width: 466px;
+    height: 466px;
+  }
+
+  .ctl {
+    position: absolute;
+    width: 56px;
+    height: 56px;
+    border-radius: 28px;
+    border-width: 2px;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.25);
+    background-color: rgba(255, 255, 255, 0.12);
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ctl-txt {
+    color: #ffffff;
+    font-size: 30px;
+    text-align: center;
+  }
+
+  .ctl-zoom-in {
+    right: 12px;
+    bottom: 168px;
+  }
+
+  .ctl-zoom-out {
+    right: 12px;
+    bottom: 104px;
+  }
+
+  .ctl-locate {
+    right: 12px;
+    bottom: 40px;
+  }
+
+  .hint {
+    position: absolute;
+    left: 60px;
+    right: 60px;
+    bottom: 30px;
+    color: #ffd166;
+    font-size: 22px;
+    padding: 8px 16px;
+    border-radius: 14px;
+    background-color: rgba(0, 0, 0, 0.55);
+    text-align: center;
+  }
+</style>
+
+<script>
+  import geolocation from '@blueos.hardware.geolocation'
+  import mapData from './mapdata.js'
+
+  const SIZE = 466
+  const R = SIZE / 2
+  const M_PER_DEG = 111320
+  // 等效 Web 墨卡托 z 缩放 → px/m 比例（在当地纬度处）
+  const PX_M_BASE = 156543.03392
+
+  export default {
+    data: {
+      hint: '',
+      hintVisible: false
+    },
+
+    onInit() {
+      // 预计算局部投影参数（中心点附近可近似等距）
+      const latRad = (mapData.center[0] * Math.PI) / 180
+      this.proj = {
+        centerLat: mapData.center[0],
+        centerLng: mapData.center[1],
+        cosLat: Math.cos(latRad),
+        mPerDegLng: M_PER_DEG * Math.cos(latRad)
+      }
+      this.user = null
+      this.touch = null
+    },
+
+    onReady() {
+      this.ctx = this.$element('map').getContext('2d')
+      this.camera = {
+        x: 0,
+        y: 0,
+        scale: Math.pow(2, mapData.zoom) / (PX_M_BASE * this.proj.cosLat)
+      }
+      this.scaleMin = Math.pow(2, mapData.minZoom) / (PX_M_BASE * this.proj.cosLat)
+      this.scaleMax = Math.pow(2, mapData.maxZoom) / (PX_M_BASE * this.proj.cosLat)
+      this.render()
+      this.requestLocation()
+    },
+
+    requestLocation() {
+      const that = this
+      if (!geolocation || !geolocation.getLocation) {
+        that.showHint('当前系统不支持定位')
+        return
+      }
+      geolocation.getLocation({
+        success: function (res) {
+          if (!res) return
+          that.user = {
+            lat: res.latitude,
+            lng: res.longitude,
+            accuracy: res.accuracy || 0
+          }
+          that.render()
+        },
+        fail: function (data, code) {
+          if (code === 400) {
+            that.showHint('未授权定位权限')
+          } else {
+            that.showHint('定位失败')
+          }
+        }
+      })
+    },
+
+    showHint(text) {
+      const that = this
+      this.hint = text
+      this.hintVisible = true
+      if (this.hintTimer) clearTimeout(this.hintTimer)
+      this.hintTimer = setTimeout(function () {
+        that.hintVisible = false
+      }, 2600)
+    },
+
+    // ---------- 坐标投影 ----------
+    worldX(lng) {
+      return (lng - this.proj.centerLng) * this.proj.mPerDegLng
+    },
+
+    worldY(lat) {
+      return (this.proj.centerLat - lat) * M_PER_DEG
+    },
+
+    toScreen(wx, wy) {
+      return [
+        wx * this.camera.scale - this.camera.x + R,
+        wy * this.camera.scale - this.camera.y + R
+      ]
+    },
+
+    screenToWorld(sx, sy) {
+      return [
+        (sx - R + this.camera.x) / this.camera.scale,
+        (sy - R + this.camera.y) / this.camera.scale
+      ]
+    },
+
+    // 将线段裁剪到圆内，返回 [x1,y1,x2,y2] 或 null
+    clipToCircle(x1, y1, x2, y2, r) {
+      const dx = x2 - x1
+      const dy = y2 - y1
+      const fx = x1 - R
+      const fy = y1 - R
+      const a = dx * dx + dy * dy
+      const b = 2 * (fx * dx + fy * dy)
+      const c = fx * fx + fy * fy - r * r
+      if (a === 0) {
+        return c <= 0 ? [x1, y1, x2, y2] : null
+      }
+      let disc = b * b - 4 * a * c
+      if (disc < 0) return null
+      disc = Math.sqrt(disc)
+      let lo = Math.max(0, (-b - disc) / (2 * a))
+      let hi = Math.min(1, (-b + disc) / (2 * a))
+      if (lo > hi) return null
+      return [x1 + dx * lo, y1 + dy * lo, x1 + dx * hi, y1 + dy * hi]
+    },
+
+    inCircle(x, y, r) {
+      const dx = x - R
+      const dy = y - R
+      return dx * dx + dy * dy <= r * r
+    },
+
+    // ---------- 渲染 ----------
+    render() {
+      if (!this.ctx) return
+      const ctx = this.ctx
+
+      ctx.fillStyle = '#0a0e14'
+      ctx.fillRect(0, 0, SIZE, SIZE)
+      ctx.fillStyle = '#10161d'
+      ctx.beginPath()
+      ctx.arc(R, R, R, 0, Math.PI * 2, true)
+      ctx.fill()
+
+      // 水面
+      for (let i = 0; i < mapData.waters.length; i++) {
+        const w = mapData.waters[i]
+        const pts = []
+        let inside = true
+        for (let j = 0; j < w.points.length; j++) {
+          const s = this.toScreen(this.worldX(w.points[j][1]), this.worldY(w.points[j][0]))
+          pts.push(s)
+          if (!this.inCircle(s[0], s[1], R - 2)) inside = false
+        }
+        if (!inside || pts.length < 3) continue
+        ctx.fillStyle = '#1c3a52'
+        ctx.strokeStyle = '#2a5a7d'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(pts[0][0], pts[0][1])
+        for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0], pts[j][1])
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        // 水面名称
+        const cx = pts.reduce(function (s, p) { return s + p[0] }, 0) / pts.length
+        const cy = pts.reduce(function (s, p) { return s + p[1] }, 0) / pts.length
+        ctx.fillStyle = '#7fb4d8'
+        ctx.font = 'normal 20px'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(w.name, cx, cy)
+      }
+
+      // 道路 / 轨道
+      const styles = {
+        highway: { width: 5, color: '#f0b64a' },
+        street: { width: 3, color: '#e8e8e8' },
+        rail: { width: 2.5, color: '#9aa0a8' }
+      }
+      for (let i = 0; i < mapData.roads.length; i++) {
+        const road = mapData.roads[i]
+        const st = styles[road.type] || styles.street
+        ctx.strokeStyle = st.color
+        ctx.lineWidth = st.width
+        ctx.lineCap = 'round'
+        for (let j = 0; j < road.points.length - 1; j++) {
+          const a = this.toScreen(this.worldX(road.points[j][1]), this.worldY(road.points[j][0]))
+          const b = this.toScreen(this.worldX(road.points[j + 1][1]), this.worldY(road.points[j + 1][0]))
+          const seg = this.clipToCircle(a[0], a[1], b[0], b[1], R)
+          if (!seg) continue
+          ctx.beginPath()
+          ctx.moveTo(seg[0], seg[1])
+          ctx.lineTo(seg[2], seg[3])
+          if (road.type === 'rail') {
+            this.strokeDashed(seg[0], seg[1], seg[2], seg[3], 12, 8)
+          } else {
+            ctx.stroke()
+          }
+        }
+      }
+
+      // POI
+      for (let i = 0; i < mapData.pois.length; i++) {
+        const poi = mapData.pois[i]
+        const s = this.toScreen(this.worldX(poi.lng), this.worldY(poi.lat))
+        if (!this.inCircle(s[0], s[1], R - 14)) continue
+        ctx.fillStyle = '#ffb35c'
+        ctx.beginPath()
+        ctx.arc(s[0], s[1], 4, 0, Math.PI * 2, true)
+        ctx.fill()
+        ctx.fillStyle = '#eef2f7'
+        ctx.font = 'normal 20px'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'top'
+        ctx.fillText(poi.name, s[0] + 8, s[1] - 12)
+      }
+
+      // 用户定位
+      if (this.user) {
+        const s = this.toScreen(this.worldX(this.user.lng), this.worldY(this.user.lat))
+        if (this.inCircle(s[0], s[1], R - 4)) {
+          if (this.user.accuracy > 0) {
+            const rad = this.user.accuracy * this.camera.scale
+            ctx.fillStyle = '#1d4d68'
+            ctx.beginPath()
+            ctx.arc(s[0], s[1], rad, 0, Math.PI * 2, true)
+            ctx.fill()
+          }
+          ctx.fillStyle = '#ffffff'
+          ctx.beginPath()
+          ctx.arc(s[0], s[1], 7, 0, Math.PI * 2, true)
+          ctx.fill()
+          ctx.strokeStyle = '#4cc3ff'
+          ctx.lineWidth = 4
+          ctx.beginPath()
+          ctx.arc(s[0], s[1], 7, 0, Math.PI * 2, true)
+          ctx.stroke()
+        }
+      }
+
+      // 比例尺（底部中央）
+      this.drawScaleBar()
+
+      // 表圈
+      ctx.strokeStyle = '#3a4149'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(R, R, R - 1, 0, Math.PI * 2, true)
+      ctx.stroke()
+    },
+
+    // 沿线段绘制虚线（Canvas 未提供 setLineDash）
+    strokeDashed(x1, y1, x2, y2, dashLen, gapLen) {
+      const ctx = this.ctx
+      const dx = x2 - x1
+      const dy = y2 - y1
+      const len = Math.sqrt(dx * dx + dy * dy)
+      if (len <= 0) return
+      let drawn = 0
+      let on = true
+      while (drawn < len) {
+        const step = Math.min(on ? dashLen : gapLen, len - drawn)
+        const fx = dx / len
+        const fy = dy / len
+        if (on) {
+          ctx.beginPath()
+          ctx.moveTo(x1 + fx * drawn, y1 + fy * drawn)
+          ctx.lineTo(x1 + fx * (drawn + step), y1 + fy * (drawn + step))
+          ctx.stroke()
+        }
+        drawn += step
+        on = !on
+      }
+    },
+
+    drawScaleBar() {
+      const ctx = this.ctx
+      const candidates = [50, 100, 200, 500, 1000]
+      let meters = candidates[0]
+      for (let i = 0; i < candidates.length; i++) {
+        const px = candidates[i] * this.camera.scale
+        if (px >= 46 && px <= 120) {
+          meters = candidates[i]
+          break
+        }
+        meters = candidates[i]
+      }
+      const px = meters * this.camera.scale
+      const y = R + 150
+      const x2 = R - 20
+      const x1 = x2 - px
+      ctx.strokeStyle = '#c9d1da'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(x1, y)
+      ctx.lineTo(x2, y)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(x1, y - 6)
+      ctx.lineTo(x1, y + 6)
+      ctx.moveTo(x2, y - 6)
+      ctx.lineTo(x2, y + 6)
+      ctx.stroke()
+      ctx.fillStyle = '#e6ebf1'
+      ctx.font = 'normal 18px'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'bottom'
+      ctx.fillText(meters + 'm', (x1 + x2) / 2, y - 8)
+    },
+
+    // ---------- 手势 ----------
+    onTouchStart(e) {
+      if (!e.touches || e.touches.length < 1) return
+      const t0 = e.touches[0]
+      const state = {
+        x: t0.clientX,
+        y: t0.clientY,
+        camX: this.camera.x,
+        camY: this.camera.y,
+        scale0: this.camera.scale
+      }
+      if (e.touches.length >= 2) {
+        const t1 = e.touches[1]
+        state.two = true
+        state.x2 = t1.clientX
+        state.y2 = t1.clientY
+        state.dist0 = Math.sqrt(
+          (t0.clientX - t1.clientX) * (t0.clientX - t1.clientX) +
+          (t0.clientY - t1.clientY) * (t0.clientY - t1.clientY)
+        )
+      }
+      this.touch = state
+    },
+
+    onTouchMove(e) {
+      if (!this.touch || !e.touches || e.touches.length < 1) return
+      const state = this.touch
+      const t0 = e.touches[0]
+
+      if (e.touches.length >= 2) {
+        const t1 = e.touches[1]
+        if (!state.two) {
+          // 第二根手指在移动过程中加入：以当前为双指起点
+          state.two = true
+          state.scale0 = this.camera.scale
+          state.dist0 = Math.sqrt(
+            (t0.clientX - t1.clientX) * (t0.clientX - t1.clientX) +
+            (t0.clientY - t1.clientY) * (t0.clientY - t1.clientY)
+          )
+          return
+        }
+        const dist = Math.sqrt(
+          (t0.clientX - t1.clientX) * (t0.clientX - t1.clientX) +
+          (t0.clientY - t1.clientY) * (t0.clientY - t1.clientY)
+        )
+        if (dist <= 0 || state.dist0 <= 0) return
+        // 双指缩放：保持双指中点下的地理位置不动
+        const midX = (t0.clientX + t1.clientX) / 2
+        const midY = (t0.clientY + t1.clientY) / 2
+        const w = this.screenToWorld(midX, midY)
+        let scale = state.scale0 * (dist / state.dist0)
+        scale = Math.max(this.scaleMin, Math.min(this.scaleMax, scale))
+        this.camera.scale = scale
+        this.camera.x = w[0] * scale + R - midX
+        this.camera.y = w[1] * scale + R - midY
+      } else if (e.touches.length === 1) {
+        // 单指平移
+        const dx = t0.clientX - state.x
+        const dy = t0.clientY - state.y
+        this.camera.x -= dx / this.camera.scale
+        this.camera.y -= dy / this.camera.scale
+        state.x = t0.clientX
+        state.y = t0.clientY
+      }
+      this.render()
+    },
+
+    onTouchEnd() {
+      this.touch = null
+    },
+
+    // ---------- 按钮 ----------
+    zoomIn() {
+      this.zoomBy(1.3)
+    },
+
+    zoomOut() {
+      this.zoomBy(1 / 1.3)
+    },
+
+    zoomBy(factor) {
+      // 以屏幕中心为锚点缩放
+      const w = this.screenToWorld(R, R)
+      let scale = this.camera.scale * factor
+      scale = Math.max(this.scaleMin, Math.min(this.scaleMax, scale))
+      this.camera.scale = scale
+      this.camera.x = w[0] * scale + R - R
+      this.camera.y = w[1] * scale + R - R
+      this.render()
+    },
+
+    locate() {
+      const that = this
+      // 已有定位则回到定位点
+      if (this.user) {
+        this.camera.x = this.worldX(this.user.lng) * this.camera.scale
+        this.camera.y = this.worldY(this.user.lat) * this.camera.scale
+        this.render()
+        return
+      }
+      this.requestLocation()
+    }
+  }
+</script>

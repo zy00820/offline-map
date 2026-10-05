@@ -1,0 +1,16 @@
+<script>
+  /**
+   * 应用级脚本。
+   * 注意：/**manifest**/ 注释标识用于携带 manifest 配置信息，请勿删除。
+   */
+  /**manifest**/
+
+  export default {
+    onCreate() {
+      console.log('[offline-map] app created')
+    },
+    onDestroy() {
+      console.log('[offline-map] app destroyed')
+    }
+  }
+</script>

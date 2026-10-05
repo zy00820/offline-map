@@ -1,0 +1,7 @@
+{
+  "name": "offline-map",
+  "version": "1.0.0",
+  "description": "适用于 iQOO Watch GT（蓝河系统 BlueOS）的离线地图应用",
+  "scripts": {},
+  "license": "MIT"
+}

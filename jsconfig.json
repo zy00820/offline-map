@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "allowJs": true,
+    "checkJs": false,
+    "baseUrl": "."
+  },
+  "include": ["src/**/*.js", "src/**/*.ux"]
+}

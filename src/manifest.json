@@ -1,0 +1,38 @@
+{
+  "package": "com.offline.map",
+  "name": "离线地图",
+  "icon": "/assets/images/icon.png",
+  "versionName": "1.0",
+  "versionCode": 1,
+  "deviceTypeList": [
+    "watch",
+    "watch-round"
+  ],
+  "features": [
+    {
+      "name": "blueos.hardware.geolocation"
+    }
+  ],
+  "permissions": [
+    {
+      "name": "watch.permission.LOCATION"
+    }
+  ],
+  "config": {
+    "designWidth": 466
+  },
+  "router": {
+    "entry": "Map",
+    "pages": {
+      "Map": {
+        "component": "index"
+      }
+    }
+  },
+  "display": {
+    "backgroundColor": "#0a0e14"
+  },
+  "appCategory": [
+    "navigation"
+  ]
+}
