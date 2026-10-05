@@ -1,8 +1,6 @@
 <script>
-  /**
-   * 应用级脚本。
-   * 注意：/**manifest**/ 注释标识用于携带 manifest 配置信息，请勿删除。
-   */
+  // 应用级脚本。
+  // 请勿删除 manifest 注释标识。
   /**manifest**/
 
   export default {

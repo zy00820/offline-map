@@ -22,9 +22,9 @@
     "designWidth": 466
   },
   "router": {
-    "entry": "Map",
+    "entry": "pages/Map",
     "pages": {
-      "Map": {
+      "pages/Map": {
         "component": "index"
       }
     }
