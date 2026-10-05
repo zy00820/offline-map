@@ -319,6 +319,14 @@
       ctx.fillStyle = '#10161d'
       ctx.fillRect(0, 0, SIZE_W, SIZE_H)
 
+      // 诊断：画一条必然可见的亮黄对角线，验证 stroke 是否生效
+      ctx.strokeStyle = '#ffff00'
+      ctx.lineWidth = 6
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.lineTo(SIZE_W, SIZE_H)
+      ctx.stroke()
+
       // 行政区边界（省级地图：地级市多边形）
       if (reg.regions && reg.regions.length > 0) {
         this.drawRegions(reg.regions)
@@ -369,6 +377,14 @@
       ctx.strokeStyle = '#3a4149'
       ctx.lineWidth = 2
       ctx.strokeRect(0, 0, SIZE_W, SIZE_H)
+
+      // 诊断统计：道路段数与覆盖范围
+      const sc = this._segCount || 0
+      let diag = '道路' + sc + '段'
+      if (sc > 0) {
+        diag += ' x=' + Math.round(this._minX) + '~' + Math.round(this._maxX) + ' y=' + Math.round(this._minY) + '~' + Math.round(this._maxY)
+      }
+      this.debug = diag
     },
 
     // 绘制行政区多边形：陆地填充 + 描边 + 城市名
@@ -460,6 +476,11 @@
           const b = this.toScreen(this.worldX(road.points[j + 1][1]), this.worldY(road.points[j + 1][0]))
           const seg = this.clipToBox(a[0], a[1], b[0], b[1], 0)
           if (!seg) continue
+          this._segCount = (this._segCount || 0) + 1
+          this._minX = this._minX === undefined ? seg[0] : Math.min(this._minX, seg[0])
+          this._maxX = this._maxX === undefined ? seg[0] : Math.max(this._maxX, seg[0])
+          this._minY = this._minY === undefined ? seg[1] : Math.min(this._minY, seg[1])
+          this._maxY = this._maxY === undefined ? seg[1] : Math.max(this._maxY, seg[1])
           ctx.beginPath()
           ctx.moveTo(seg[0], seg[1])
           ctx.lineTo(seg[2], seg[3])
