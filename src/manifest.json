@@ -5,8 +5,7 @@
   "versionName": "1.0",
   "versionCode": 1,
   "deviceTypeList": [
-    "watch",
-    "watch-round"
+    "watch-square"
   ],
   "features": [
     {
@@ -19,7 +18,7 @@
     }
   ],
   "config": {
-    "designWidth": 466
+    "designWidth": 390
   },
   "router": {
     "entry": "pages/Map",
