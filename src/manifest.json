@@ -10,7 +10,7 @@
   ],
   "features": [
     {
-      "name": "blueos.hardware.geolocation"
+      "name": "blueos.hardware.location.location"
     }
   ],
   "permissions": [

@@ -103,7 +103,7 @@
 </style>
 
 <script>
-  import geolocation from '@blueos.hardware.geolocation'
+  import geolocation from '@blueos.hardware.location.location'
   import mapData from './mapdata.js'
 
   const SIZE = 466
