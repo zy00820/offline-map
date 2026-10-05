@@ -9,6 +9,9 @@
       ontouchcancel="onTouchEnd"
     ></canvas>
 
+    <!-- 区域名（点击切换） -->
+    <text class="region-name" onclick="switchRegion">{{regionName}} ›</text>
+
     <!-- 缩放 / 定位 控制按钮 -->
     <div class="ctl ctl-zoom-in" onclick="zoomIn">
       <text class="ctl-txt">＋</text>
@@ -36,6 +39,19 @@
   .map {
     width: 466px;
     height: 466px;
+  }
+
+  .region-name {
+    position: absolute;
+    top: 26px;
+    left: 0;
+    right: 0;
+    color: #ffd166;
+    font-size: 24px;
+    text-align: center;
+    padding: 6px 18px;
+    background-color: rgba(0, 0, 0, 0.4);
+    border-radius: 16px;
   }
 
   .ctl {
@@ -98,32 +114,53 @@
 
   export default {
     data: {
+      regionName: '',
       hint: '',
       hintVisible: false
     },
 
     onInit() {
-      // 预计算局部投影参数（中心点附近可近似等距）
-      const latRad = (mapData.center[0] * Math.PI) / 180
+      this.regionIdx = 0
+      this.applyRegion()
+    },
+
+    // 切换区域：循环 北京 → 江苏 → 四川 → 北京
+    switchRegion() {
+      this.regionIdx = (this.regionIdx + 1) % mapData.regions.length
+      this.user = null
+      this.applyRegion()
+      this.setupCamera()
+      this.render()
+      this.requestLocation()
+    },
+
+    // 根据 regionIdx 计算投影参数与显示名
+    applyRegion() {
+      const reg = mapData.regions[this.regionIdx]
+      const latRad = (reg.center[0] * Math.PI) / 180
       this.proj = {
-        centerLat: mapData.center[0],
-        centerLng: mapData.center[1],
+        centerLat: reg.center[0],
+        centerLng: reg.center[1],
         cosLat: Math.cos(latRad),
         mPerDegLng: M_PER_DEG * Math.cos(latRad)
       }
-      this.user = null
-      this.touch = null
+      this.regionName = reg.name
+    },
+
+    setupCamera() {
+      const reg = mapData.regions[this.regionIdx]
+      this.camera = {
+        x: 0,
+        y: 0,
+        scale: Math.pow(2, reg.zoom) / (PX_M_BASE * this.proj.cosLat)
+      }
+      this.scaleMin = Math.pow(2, reg.minZoom) / (PX_M_BASE * this.proj.cosLat)
+      this.scaleMax = Math.pow(2, reg.maxZoom) / (PX_M_BASE * this.proj.cosLat)
     },
 
     onReady() {
       this.ctx = this.$element('map').getContext('2d')
-      this.camera = {
-        x: 0,
-        y: 0,
-        scale: Math.pow(2, mapData.zoom) / (PX_M_BASE * this.proj.cosLat)
-      }
-      this.scaleMin = Math.pow(2, mapData.minZoom) / (PX_M_BASE * this.proj.cosLat)
-      this.scaleMax = Math.pow(2, mapData.maxZoom) / (PX_M_BASE * this.proj.cosLat)
+      this.setupCamera()
       this.render()
       this.requestLocation()
     },
@@ -218,6 +255,7 @@
     render() {
       if (!this.ctx) return
       const ctx = this.ctx
+      const reg = mapData.regions[this.regionIdx]
 
       ctx.fillStyle = '#0a0e14'
       ctx.fillRect(0, 0, SIZE, SIZE)
@@ -226,78 +264,24 @@
       ctx.arc(R, R, R, 0, Math.PI * 2, true)
       ctx.fill()
 
-      // 水面
-      for (let i = 0; i < mapData.waters.length; i++) {
-        const w = mapData.waters[i]
-        const pts = []
-        let inside = true
-        for (let j = 0; j < w.points.length; j++) {
-          const s = this.toScreen(this.worldX(w.points[j][1]), this.worldY(w.points[j][0]))
-          pts.push(s)
-          if (!this.inCircle(s[0], s[1], R - 2)) inside = false
-        }
-        if (!inside || pts.length < 3) continue
-        ctx.fillStyle = '#1c3a52'
-        ctx.strokeStyle = '#2a5a7d'
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.moveTo(pts[0][0], pts[0][1])
-        for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0], pts[j][1])
-        ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-        // 水面名称
-        const cx = pts.reduce(function (s, p) { return s + p[0] }, 0) / pts.length
-        const cy = pts.reduce(function (s, p) { return s + p[1] }, 0) / pts.length
-        ctx.fillStyle = '#7fb4d8'
-        ctx.font = 'normal 20px'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(w.name, cx, cy)
+      // 行政区边界（省级地图：地级市多边形）
+      if (reg.regions && reg.regions.length > 0) {
+        this.drawRegions(reg.regions)
       }
 
-      // 道路 / 轨道
-      const styles = {
-        highway: { width: 5, color: '#f0b64a' },
-        street: { width: 3, color: '#e8e8e8' },
-        rail: { width: 2.5, color: '#9aa0a8' }
+      // 水面（街道级地图）
+      if (reg.waters && reg.waters.length > 0) {
+        this.drawWaters(reg.waters)
       }
-      for (let i = 0; i < mapData.roads.length; i++) {
-        const road = mapData.roads[i]
-        const st = styles[road.type] || styles.street
-        ctx.strokeStyle = st.color
-        ctx.lineWidth = st.width
-        ctx.lineCap = 'round'
-        for (let j = 0; j < road.points.length - 1; j++) {
-          const a = this.toScreen(this.worldX(road.points[j][1]), this.worldY(road.points[j][0]))
-          const b = this.toScreen(this.worldX(road.points[j + 1][1]), this.worldY(road.points[j + 1][0]))
-          const seg = this.clipToCircle(a[0], a[1], b[0], b[1], R)
-          if (!seg) continue
-          ctx.beginPath()
-          ctx.moveTo(seg[0], seg[1])
-          ctx.lineTo(seg[2], seg[3])
-          if (road.type === 'rail') {
-            this.strokeDashed(seg[0], seg[1], seg[2], seg[3], 12, 8)
-          } else {
-            ctx.stroke()
-          }
-        }
+
+      // 道路 / 轨道（街道级地图）
+      if (reg.roads && reg.roads.length > 0) {
+        this.drawRoads(reg.roads)
       }
 
       // POI
-      for (let i = 0; i < mapData.pois.length; i++) {
-        const poi = mapData.pois[i]
-        const s = this.toScreen(this.worldX(poi.lng), this.worldY(poi.lat))
-        if (!this.inCircle(s[0], s[1], R - 14)) continue
-        ctx.fillStyle = '#ffb35c'
-        ctx.beginPath()
-        ctx.arc(s[0], s[1], 4, 0, Math.PI * 2, true)
-        ctx.fill()
-        ctx.fillStyle = '#eef2f7'
-        ctx.font = 'normal 20px'
-        ctx.textAlign = 'left'
-        ctx.textBaseline = 'top'
-        ctx.fillText(poi.name, s[0] + 8, s[1] - 12)
+      if (reg.pois && reg.pois.length > 0) {
+        this.drawPois(reg.pois, reg)
       }
 
       // 用户定位
@@ -334,6 +318,125 @@
       ctx.stroke()
     },
 
+    // 绘制行政区多边形：陆地填充 + 描边 + 城市名
+    drawRegions(regions) {
+      const ctx = this.ctx
+      for (let i = 0; i < regions.length; i++) {
+        const r = regions[i]
+        const pts = []
+        let inside = true
+        for (let j = 0; j < r.points.length; j++) {
+          const s = this.toScreen(this.worldX(r.points[j][1]), this.worldY(r.points[j][0]))
+          pts.push(s)
+          if (!this.inCircle(s[0], s[1], R + 20)) inside = false
+        }
+        if (!inside || pts.length < 3) continue
+        // 陆地填充
+        ctx.fillStyle = '#1b2a22'
+        ctx.strokeStyle = '#4a6b4a'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(pts[0][0], pts[0][1])
+        for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0], pts[j][1])
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+      }
+    },
+
+    drawWaters(waters) {
+      const ctx = this.ctx
+      for (let i = 0; i < waters.length; i++) {
+        const w = waters[i]
+        const pts = []
+        let inside = true
+        for (let j = 0; j < w.points.length; j++) {
+          const s = this.toScreen(this.worldX(w.points[j][1]), this.worldY(w.points[j][0]))
+          pts.push(s)
+          if (!this.inCircle(s[0], s[1], R - 2)) inside = false
+        }
+        if (!inside || pts.length < 3) continue
+        ctx.fillStyle = '#1c3a52'
+        ctx.strokeStyle = '#2a5a7d'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(pts[0][0], pts[0][1])
+        for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0], pts[j][1])
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        const cx = pts.reduce(function (s, p) { return s + p[0] }, 0) / pts.length
+        const cy = pts.reduce(function (s, p) { return s + p[1] }, 0) / pts.length
+        ctx.fillStyle = '#7fb4d8'
+        ctx.font = 'normal 20px'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(w.name, cx, cy)
+      }
+    },
+
+    drawRoads(roads) {
+      const ctx = this.ctx
+      const styles = {
+        highway: { width: 5, color: '#f0b64a' },
+        street: { width: 3, color: '#e8e8e8' },
+        rail: { width: 2.5, color: '#9aa0a8' }
+      }
+      for (let i = 0; i < roads.length; i++) {
+        const road = roads[i]
+        const st = styles[road.type] || styles.street
+        ctx.strokeStyle = st.color
+        ctx.lineWidth = st.width
+        ctx.lineCap = 'round'
+        for (let j = 0; j < road.points.length - 1; j++) {
+          const a = this.toScreen(this.worldX(road.points[j][1]), this.worldY(road.points[j][0]))
+          const b = this.toScreen(this.worldX(road.points[j + 1][1]), this.worldY(road.points[j + 1][0]))
+          const seg = this.clipToCircle(a[0], a[1], b[0], b[1], R)
+          if (!seg) continue
+          ctx.beginPath()
+          ctx.moveTo(seg[0], seg[1])
+          ctx.lineTo(seg[2], seg[3])
+          if (road.type === 'rail') {
+            this.strokeDashed(seg[0], seg[1], seg[2], seg[3], 12, 8)
+          } else {
+            ctx.stroke()
+          }
+        }
+      }
+    },
+
+    drawPois(pois, reg) {
+      const ctx = this.ctx
+      const isProvince = reg.regions && reg.regions.length > 0
+      for (let i = 0; i < pois.length; i++) {
+        const poi = pois[i]
+        const s = this.toScreen(this.worldX(poi.lng), this.worldY(poi.lat))
+        if (!this.inCircle(s[0], s[1], R - 14)) continue
+        // 省级：城市名直接显示；街道级：圆点+名称
+        if (isProvince) {
+          ctx.fillStyle = '#ffd166'
+          ctx.beginPath()
+          ctx.arc(s[0], s[1], 3, 0, Math.PI * 2, true)
+          ctx.fill()
+          ctx.fillStyle = '#eef2f7'
+          ctx.font = 'normal 18px'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'top'
+          ctx.fillText(poi.name, s[0], s[1] + 6)
+        } else {
+          ctx.fillStyle = '#ffb35c'
+          ctx.beginPath()
+          ctx.arc(s[0], s[1], 4, 0, Math.PI * 2, true)
+          ctx.fill()
+          ctx.fillStyle = '#eef2f7'
+          ctx.font = 'normal 20px'
+          ctx.textAlign = 'left'
+          ctx.textBaseline = 'top'
+          ctx.fillText(poi.name, s[0] + 8, s[1] - 12)
+        }
+      }
+    },
+
     // 沿线段绘制虚线（Canvas 未提供 setLineDash）
     strokeDashed(x1, y1, x2, y2, dashLen, gapLen) {
       const ctx = this.ctx
@@ -360,7 +463,8 @@
 
     drawScaleBar() {
       const ctx = this.ctx
-      const candidates = [50, 100, 200, 500, 1000]
+      // 扩展比例尺候选，覆盖省级（km 级）到街道级（m 级）
+      const candidates = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000]
       let meters = candidates[0]
       for (let i = 0; i < candidates.length; i++) {
         const px = candidates[i] * this.camera.scale
@@ -390,7 +494,8 @@
       ctx.font = 'normal 18px'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'bottom'
-      ctx.fillText(meters + 'm', (x1 + x2) / 2, y - 8)
+      const label = meters >= 1000 ? (meters / 1000) + 'km' : meters + 'm'
+      ctx.fillText(label, (x1 + x2) / 2, y - 8)
     },
 
     // ---------- 手势 ----------

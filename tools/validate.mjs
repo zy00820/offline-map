@@ -44,7 +44,7 @@ const ctx = new Proxy(
   }
 )
 
-const page = Function(
+const { page, mapData } = Function(
   'ctx',
   'setTimeout',
   `
@@ -53,7 +53,7 @@ const page = Function(
   ${js}
   const page = Page
   page.$element = function () { return { getContext: function () { return ctx } } }
-  return page
+  return { page, mapData }
   `
 )(ctx, setTimeout)
 
@@ -76,44 +76,43 @@ ctx.arc = ctx.arc || (() => {})
 try {
   page.onInit()
   page.onReady()
-  console.log('onInit/onReady 执行成功')
+  const regionCount = mapData.regions.length
+  console.log(`onInit/onReady 执行成功（区域: ${page.regionName}, 共 ${regionCount} 个区域）`)
 
-  // 模拟单指平移 50px
-  page.onTouchStart({ touches: [{ clientX: 233, clientY: 233 }] })
-  page.onTouchMove({ touches: [{ clientX: 283, clientY: 283 }] })
-  page.onTouchEnd()
-  console.log('单指平移执行成功, camera:', JSON.stringify({ x: page.camera.x.toFixed(2), y: page.camera.y.toFixed(2), scale: page.camera.scale.toFixed(4) }))
+  // 遍历所有区域，验证切换+渲染无错
+  for (let r = 0; r < regionCount; r++) {
+    if (r > 0) {
+      page.switchRegion()
+    }
+    console.log(`  [区域${r}] ${page.regionName} scale=${page.camera.scale.toFixed(5)} ` +
+      `[${page.scaleMin.toFixed(5)}, ${page.scaleMax.toFixed(5)}]`)
+    page.render()
 
-  // 模拟双指缩放（放大）
-  page.onTouchStart({
-    touches: [
-      { clientX: 200, clientY: 200 },
-      { clientX: 266, clientY: 266 }
-    ]
-  })
-  page.onTouchMove({
-    touches: [
-      { clientX: 180, clientY: 180 },
-      { clientX: 286, clientY: 286 }
-    ]
-  })
-  page.onTouchEnd()
-  console.log('双指缩放执行成功, scale:', page.camera.scale.toFixed(4))
+    // 单指平移
+    page.onTouchStart({ touches: [{ clientX: 233, clientY: 233 }] })
+    page.onTouchMove({ touches: [{ clientX: 283, clientY: 283 }] })
+    page.onTouchEnd()
 
-  // 模拟按钮缩放与回到初始
-  page.zoomIn()
-  page.zoomOut()
-  page.zoomIn()
-  page.zoomIn()
-  page.zoomIn()
-  console.log('按钮缩放执行成功, scale 范围约束:', page.camera.scale >= page.scaleMin && page.camera.scale <= page.scaleMax)
+    // 双指缩放
+    page.onTouchStart({
+      touches: [{ clientX: 200, clientY: 200 }, { clientX: 266, clientY: 266 }]
+    })
+    page.onTouchMove({
+      touches: [{ clientX: 180, clientY: 180 }, { clientX: 286, clientY: 286 }]
+    })
+    page.onTouchEnd()
 
-  // 极限缩放
-  for (let i = 0; i < 30; i++) page.zoomIn()
-  console.log('放大到上限 scale:', page.camera.scale.toFixed(4), '= scaleMax:', page.scaleMax.toFixed(4))
-  for (let i = 0; i < 60; i++) page.zoomOut()
-  console.log('缩小到下限 scale:', page.camera.scale.toFixed(4), '= scaleMin:', page.scaleMin.toFixed(4))
+    // 按钮缩放极限
+    for (let i = 0; i < 40; i++) page.zoomIn()
+    if (page.camera.scale > page.scaleMax + 1e-9) throw new Error('scale 超过上限')
+    for (let i = 0; i < 80; i++) page.zoomOut()
+    if (page.camera.scale < page.scaleMin - 1e-9) throw new Error('scale 低于下限')
+    page.render()
+  }
+  console.log(`全部 ${regionCount} 个区域切换+平移+缩放+渲染 通过`)
 
+  // 回到初始区域再校验裁剪
+  page.switchRegion()
   page.render()
   console.log('渲染统计: stroke=', stats.stroke, ' fill=', stats.fill, ' text=', stats.text, ' draw=', stats.draw)
 
