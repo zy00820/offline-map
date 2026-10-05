@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <canvas
-      id="map"
+      id="mapCanvas"
       class="map"
       ontouchstart="onTouchStart"
       ontouchmove="onTouchMove"
@@ -25,6 +25,9 @@
 
     <!-- 提示信息（定位失败等） -->
     <text class="hint" if="{{hintVisible}}">{{hint}}</text>
+
+    <!-- 运行诊断状态（持久显示，定位渲染问题用） -->
+    <text class="debug">{{debug}}</text>
   </div>
 </template>
 
@@ -100,6 +103,16 @@
     background-color: rgba(0, 0, 0, 0.55);
     text-align: center;
   }
+
+  .debug {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 4px;
+    color: #9aa7b3;
+    font-size: 18px;
+    text-align: center;
+  }
 </style>
 
 <script>
@@ -116,7 +129,8 @@
     data: {
       regionName: '',
       hint: '',
-      hintVisible: false
+      hintVisible: false,
+      debug: ''
     },
 
     onInit() {
@@ -133,11 +147,25 @@
 
     onShow() {
       // 官方 canvas 示例在 onShow 中获取上下文并渲染
-      // onReady 时 canvas 元素可能尚未完成布局，导致 getContext 无效
-      const canvas = this.$element('map')
-      if (canvas) {
-        this.ctx = canvas.getContext('2d')
+      // 这里加入诊断：定位 canvas 元素 / 上下文 / 绘制是否成功
+      let dbg = ''
+      const canvas = this.$element('mapCanvas')
+      if (!canvas) {
+        dbg = 'E1:canvas元素未找到'
+      } else {
+        try {
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            dbg = 'E2:getContext为空'
+          } else {
+            this.ctx = ctx
+            dbg = 'OK:' + (mapData.regions[this.regionIdx] ? mapData.regions[this.regionIdx].name : '?')
+          }
+        } catch (e) {
+          dbg = 'E3:' + (e && e.message ? e.message : String(e))
+        }
       }
+      this.debug = dbg
       if (!this.camera) {
         this.setupCamera()
       }
@@ -151,8 +179,8 @@
       this.user = null
       this.applyRegion()
       this.setupCamera()
-      // 重新获取 canvas 上下文（可能因页面切换而失效）
-      const canvas = this.$element('map')
+      // 切换区域后重新获取 canvas 上下文
+      const canvas = this.$element('mapCanvas')
       if (canvas) {
         this.ctx = canvas.getContext('2d')
       }
