@@ -122,6 +122,27 @@
     onInit() {
       this.regionIdx = 0
       this.applyRegion()
+      this.user = null
+      this.touch = null
+    },
+
+    onReady() {
+      // 页面创建完成，初始化相机参数（canvas 渲染延迟到 onShow）
+      this.setupCamera()
+    },
+
+    onShow() {
+      // 官方 canvas 示例在 onShow 中获取上下文并渲染
+      // onReady 时 canvas 元素可能尚未完成布局，导致 getContext 无效
+      const canvas = this.$element('map')
+      if (canvas) {
+        this.ctx = canvas.getContext('2d')
+      }
+      if (!this.camera) {
+        this.setupCamera()
+      }
+      this.render()
+      this.requestLocation()
     },
 
     // 切换区域：循环 北京 → 江苏 → 四川 → 北京
@@ -130,6 +151,11 @@
       this.user = null
       this.applyRegion()
       this.setupCamera()
+      // 重新获取 canvas 上下文（可能因页面切换而失效）
+      const canvas = this.$element('map')
+      if (canvas) {
+        this.ctx = canvas.getContext('2d')
+      }
       this.render()
       this.requestLocation()
     },
@@ -156,13 +182,6 @@
       }
       this.scaleMin = Math.pow(2, reg.minZoom) / (PX_M_BASE * this.proj.cosLat)
       this.scaleMax = Math.pow(2, reg.maxZoom) / (PX_M_BASE * this.proj.cosLat)
-    },
-
-    onReady() {
-      this.ctx = this.$element('map').getContext('2d')
-      this.setupCamera()
-      this.render()
-      this.requestLocation()
     },
 
     requestLocation() {
